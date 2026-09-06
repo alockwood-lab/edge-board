@@ -1,0 +1,7 @@
+# Never commit credentials or fetched payloads
+fixtures/
+logos/
+*.log
+.DS_Store
+# Local scratch
+corstest.html

@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en" data-vb-boot="loading">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DEMO · Edge Board</title>
+<!-- Error handlers install BEFORE anything else. A blank page with an error
+     only in the console is the number one single-file failure mode, and most
+     users never open devtools. This turns it into a visible message. -->
+<script>
+window.__vbErrs = [];
+window.onerror = function (m, s, l, c, e) {
+  window.__vbErrs.push({ m: String(m), l: l, c: c, stack: e && e.stack });
+  document.documentElement.dataset.vbBoot = 'error';
+};
+window.onunhandledrejection = function (ev) {
+  window.__vbErrs.push({ m: 'unhandled rejection: ' + ev.reason });
+  document.documentElement.dataset.vbBoot = 'error';
+};
+</script>
+<style>
+/* ============================================================================
+   EDGE BOARD — "SPORTSBOOK" visual system.
+
+   Deliberately diverged from every other app on this machine. Measured, not
+   guessed — these are the lanes already occupied and therefore forbidden:
+     intrinsics      dark + neon green #00ff41 + heavy outer glow
+     tarkov-companion dark warm olive/tan, 26 uppercase + 33 letter-spacing +
+                      50 monospace rules, dense tables   <-- the collision
+     hub-preview / fpa-hub  flat light cool grey + Indeed blue #2557a7
+     finygles-live   dark brown/orange
+     calculator      light, 16px radius, minimal
+   So: cool white CARDS on cool grey, a cool near-black header (not warm),
+   MIXED CASE with no tracking, BOLD SANS figures (not mono), 8px radius, and
+   the chroma carried by per-venue BRAND CHIPS rather than by chrome. That last
+   point is what makes it read as a book rather than a terminal, and it is also
+   forced by measurement:
+
+     navy #1c5cab + oxide #a3201a               CVD dE 22.9  PASS
+     navy + oxide + indigo accent #4338ca       normal dE 9.9  FAIL
+
+   A coloured brand accent collides with a coloured polarity pair. Chrome is
+   therefore achromatic and the brand colour lives in the venue chips, where
+   19 mutually distinct hues are the point.
+
+   MEASURED text contrast (vs card #ffffff / page #f1f3f6 / head #12141a):
+     ink        #101319   19.28 / 17.35 / —
+     ink-2      #3f4652    9.61 /  8.65 / —
+     ink-3      #667081    5.14 /  4.63 / —
+     pos        #1c5cab    6.66 /  5.99 / —      neg #a3201a  7.59 / 6.83
+     warn       #8a5a00    5.95 /  5.35          serious #9a4b12  6.22 / 5.60
+     on-head    #f7f9fc    —    /  —    / 16.4
+   ============================================================================ */
+:root {
+  --bg-page:#f1f3f6; --bg-surface:#ffffff; --bg-raised:#e7eaf0; --bg-row-alt:#fafbfc;
+  --bg-hover:#eef1f6; --bg-head:#0b1220; --on-head:#f7fafd;
+  --border:#dfe3ea; --border-strong:#b9c0cc; --rule:#eceff4;
+  --text-primary:#101319; --text-secondary:#3f4652; --text-muted:#667081;
+  --grid:#e7eaf0; --axis:#b9c0cc;
+  /* POLARITY moved to the betting convention: green up, red down.
+     Measured: green #0b7a3b vs red #c62828 is CVD dE 6.4 (deutan), which sits
+     in the band that is legal ONLY with secondary encoding. This app ships
+     four kinds — a leading +/- on every signed number, the 4-state density
+     glyph, the verdict word, and a full no-colour mode — so the band is
+     satisfied. It is also a real improvement on the 4.1 this pair scores at
+     the usual brighter steps. The pair against the brand blue clears
+     all-pairs: CVD 6.4, normal 29.1, ALL CHECKS PASS. */
+  --pos:#0b7a3b; --neg:#c62828; --neg-mark:#a31515;
+  --warn:#8a5a00; --serious:#9a4b12; --neutral:#3f4652;
+  /* Brand blue is the interactive colour and it is measurably clear of both
+     polarity inks (normal dE 29.1), so a price button can never be misread
+     as a signed figure. */
+  --brand:#1493ff; --brand-ink:#0a63b0; --brand-wash:#eaf4ff;
+  --accent:#0a63b0; --focus:#1493ff; --tier1:#0a63b0;
+  --s1:#00897b; --s2:#b8860b; --s3:#d55181;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --serif:var(--sans);
+  --row-h:32px; --r:10px; --r-sm:8px;
+  --h-strip:26px; --h-nav:38px; --h-chrome:64px; --h-filters:84px;
+  --shadow:0 1px 2px rgba(16,19,25,.06), 0 1px 8px rgba(16,19,25,.04);
+}
+html[data-nocolour="1"] {
+  --pos:var(--text-primary); --neg:var(--text-primary); --neg-mark:var(--text-primary);
+  --warn:var(--text-secondary); --serious:var(--text-secondary); --neutral:var(--text-secondary);
+  --tier1:var(--text-primary); --s1:#101319; --s2:#3f4652; --s3:#667081;
+}
+html[data-nocolour="1"] .vchip{filter:grayscale(1)}
+html[data-nocolour="1"] .spark path:nth-of-type(2){stroke-dasharray:5 3}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg-page);color:var(--text-primary);font-family:var(--sans);
+  font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
+body{padding-top:var(--h-chrome)}
+a{color:var(--brand-ink);text-decoration:none;font-weight:600}
+a:hover{text-decoration:underline}
+
+/* Controls: soft, tappable, mixed case. No uppercase, no tracking — that
+   register is what read as tarkov-companion. */
+button,select,input{font-family:var(--sans);font-size:12.5px;color:var(--text-primary);
+  background:var(--bg-surface);border:1px solid var(--border-strong);
+  border-radius:var(--r-sm);padding:5px 11px}
+button{cursor:pointer;font-weight:600;box-shadow:var(--shadow)}
+button:hover{background:var(--bg-hover)}
+button.pri{background:var(--brand);border-color:var(--brand);
+  color:#fff;font-weight:700}
+button.pri:hover{background:var(--brand-ink);border-color:var(--brand-ink)}
+input{box-shadow:none}
+input:focus,select:focus{border-color:var(--focus);outline:none;
+  box-shadow:0 0 0 3px rgba(20,147,255,.22)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+/* Figures are BOLD SANS + tabular. Mono is reserved for literal machine
+   strings (ids, the filter arithmetic) and appears almost nowhere. */
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+
+/* SYNTHETIC BANNER — undismissable. Solid amber bar, no hatch: the hatch was
+   part of the printed-instrument register. */
+/* Fixed height and a single clipped line. A provenance strip that wraps
+   pushes into the nav and breaks every sticky offset below it. */
+#demostrip{position:fixed;top:0;left:0;right:0;height:var(--h-strip);z-index:60;
+  background:#ffd24a;border-bottom:1px solid #d9a400;display:flex;align-items:center;
+  gap:9px;padding:0 14px;font-size:11.5px;color:#3d2a00;font-weight:700;
+  white-space:nowrap;overflow:hidden}
+#demostrip>span:first-child{flex:0 0 auto}
+#demostrip .sep{color:#5c4200;font-weight:500;overflow:hidden;text-overflow:ellipsis;
+  min-width:0}
+/* The strip is a provenance indicator, not decoration, so it changes state:
+   amber = synthetic, blue = fetching, green = real lines loaded. */
+#demostrip.fetching{background:#cfe6ff;border-bottom-color:#1493ff;color:#0a3c66}
+#demostrip.fetching .sep{color:#14527f}
+#demostrip.liveok{background:#d7f2dd;border-bottom-color:#0b7a3b;color:#0a3d1f}
+#demostrip.liveok .sep{color:#155c31}
+
+/* HEADER — a dark stadium band. Cool near-black, NOT the warm #0e100f that
+   tarkov uses. Tabs are pills, mixed case. */
+nav{position:fixed;top:var(--h-strip);left:0;right:0;height:var(--h-nav);z-index:55;
+  background:var(--bg-head);border-bottom:0;display:flex;align-items:center;gap:3px;
+  padding:0 12px;overflow-x:auto}
+nav a{padding:5px 12px;border-radius:999px;font-size:12.5px;font-weight:600;
+  color:rgba(247,249,252,.62);white-space:nowrap;text-decoration:none}
+nav a:hover{color:var(--on-head);background:rgba(255,255,255,.09)}
+nav a.on{background:var(--brand);color:#fff;font-weight:700}
+nav .grow{flex:1}
+nav .clock{font-size:11.5px;color:rgba(247,249,252,.58);white-space:nowrap;
+  font-variant-numeric:tabular-nums}
+
+main{padding:12px 14px 64px}
+/* The board is genuinely wider than most viewports. The PAGE scrolls
+   horizontally rather than a wrapper div, because an overflow container
+   would create a clipping context and break `position:sticky` on thead --
+   the same trap as `overflow:hidden` on the table. */
+.tscroll{overflow-x:visible}
+.widehint{font-size:11.5px;color:var(--text-muted);padding:4px 2px 0}
+h1{font-size:21px;font-weight:700;letter-spacing:-.012em;margin-bottom:3px}
+h2{font-size:14px;font-weight:700;letter-spacing:-.004em;color:var(--text-primary);
+  margin:18px 0 8px}
+.sub{font-size:12.5px;color:var(--text-secondary);margin-bottom:10px;max-width:82ch}
+.muted{color:var(--text-muted)}
+.small{font-size:11.5px}
+
+/* CARDS, not ruled blocks. Soft border, soft shadow, real radius. */
+.panel{background:var(--bg-surface);border:1px solid var(--border);
+  border-radius:var(--r);padding:12px 14px;margin-bottom:11px;box-shadow:var(--shadow)}
+.row{display:flex;gap:13px;flex-wrap:wrap;align-items:center}
+.cols{display:flex;gap:11px;flex-wrap:wrap}
+.cols>.panel{flex:1;min-width:290px}
+
+#filters{position:sticky;top:var(--h-chrome);z-index:40;background:var(--bg-page);
+  border:0;border-bottom:1px solid var(--border);border-radius:0;
+  padding:8px 2px 7px;margin-bottom:2px}
+#filters .row{flex-wrap:nowrap;gap:6px}
+/* Sports scroll horizontally on their own line; the control row never
+   scrolls, so the layout and mode toggles can never be clipped off-screen
+   the way they were when all 21 chips shared one nowrap line. */
+#filters .catrow{overflow-x:auto;scrollbar-width:thin;padding-bottom:2px}
+#filters .ctlrow{overflow:visible;margin-top:7px;flex-wrap:wrap;row-gap:6px}
+#filters .ctlrow>.row{gap:6px;flex-wrap:nowrap}
+#filters .arith{font-family:var(--mono);font-size:11px;color:var(--text-muted);
+  margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Sport chips carry an ICON. Pills, mixed case, white on grey. */
+.chip{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;
+  border:1px solid var(--border);border-radius:999px;font-size:12px;font-weight:600;
+  color:var(--text-secondary);cursor:pointer;background:var(--bg-surface);
+  white-space:nowrap;box-shadow:var(--shadow)}
+.chip:hover{background:var(--bg-hover);color:var(--text-primary)}
+.chip.on{background:var(--brand);border-color:var(--brand);color:#fff;
+  font-weight:700}
+.chip .sicon{width:15px;height:15px;flex:0 0 15px}
+
+/* ---------------------------------------------------------------- TABLE
+   Still 22 columns and still dense, but it now sits INSIDE a white card with
+   a radius, which is what stops it reading as a terminal. */
+/* NOTE: no `overflow:hidden` here. It clips the border-radius nicely and it
+   also creates a clipping context that BREAKS `position:sticky` on thead --
+   the header detaches and floats mid-table. Corners are rounded on the edge
+   cells instead, which keeps sticky working. */
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;
+  background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r);
+  box-shadow:var(--shadow)}
+thead tr:first-child th:first-child{border-top-left-radius:var(--r)}
+thead tr:first-child th:last-child{border-top-right-radius:var(--r)}
+tbody tr:last-child td:first-child{border-bottom-left-radius:var(--r)}
+tbody tr:last-child td:last-child{border-bottom-right-radius:var(--r)}
+caption{caption-side:top;text-align:left;font-size:11.5px;color:var(--text-muted);
+  padding:2px 2px 7px;background:transparent}
+thead th{position:sticky;top:calc(var(--h-chrome) + var(--h-filters) - 2px);z-index:30;
+  background:var(--bg-raised);text-align:left;font-size:11px;font-weight:700;
+  color:var(--text-secondary);padding:7px 9px;border-bottom:1px solid var(--border);
+  white-space:nowrap;cursor:pointer;user-select:none}
+thead th.r{text-align:right}
+thead th:hover{color:var(--text-primary)}
+tbody td{padding:4px 9px;border-bottom:1px solid var(--rule);height:var(--row-h);
+  white-space:nowrap;vertical-align:middle}
+tbody td.r{text-align:right;font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:nth-child(even){background:var(--bg-row-alt)}
+tbody tr:hover{background:var(--bg-hover)}
+tbody tr.sel,tbody tr.sel:hover{background:var(--brand-wash);
+  box-shadow:inset 3px 0 0 var(--brand)}
+tbody tr.v-PASS td,tbody tr.v-NOPRICE td{color:var(--text-muted)}
+tbody tr.v-BET td{color:var(--text-primary)}
+tbody tr.v-BET td.k{font-weight:700}
+tbody td.k{font-weight:600}
+
+/* Density glyph: kept, because it is the CVD/greyscale carrier, but demoted
+   to a quiet margin so it no longer dominates the row. */
+.g{font-family:var(--mono);font-size:11px;letter-spacing:-1px;color:var(--border-strong);
+  text-align:center;width:1%;padding:0 6px}
+.pos{color:var(--pos);font-weight:600}
+.neg{color:var(--neg);font-weight:600}
+.warn{color:var(--warn);font-weight:600}
+
+/* ODDS PILL — the single most book-like element. A price is a thing you press,
+   so it is a bordered pill with a bold figure, not a bare table number. */
+/* THE ANSWER TILE — verdict, one sentence, and a fair-vs-best grid. This is
+   the whole point of clicking into a game: an answer, not a reading task. */
+.answer{background:var(--bg-surface);border:1px solid var(--border);
+  border-left:4px solid var(--neg);border-radius:var(--r);padding:14px 16px;
+  margin:10px 0 12px;box-shadow:var(--shadow)}
+.answer.yes{border-left-color:var(--pos)}
+.ahead{display:flex;align-items:baseline;gap:11px;flex-wrap:wrap}
+.averdict{font-size:13px;font-weight:800;letter-spacing:.02em;padding:3px 11px;
+  border-radius:999px;color:#fff;white-space:nowrap}
+.averdict.no{background:var(--neg)}
+.averdict.yes{background:var(--pos)}
+.aline{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.asent{margin-top:9px;font-size:13px;color:var(--text-secondary);max-width:88ch;
+  line-height:1.5}
+.agrid{display:grid;grid-template-columns:minmax(90px,1fr) 110px minmax(190px,1.3fr) 90px;
+  gap:7px 14px;margin-top:13px;align-items:center}
+.agrid .ah{font-size:10.5px;font-weight:700;color:var(--text-muted);
+  text-transform:uppercase;letter-spacing:.06em}
+.agrid .an{font-weight:700;font-size:13.5px}
+.agrid .av{font-variant-numeric:tabular-nums;font-weight:700;font-size:13.5px;
+  display:flex;align-items:center;gap:9px}
+.abook{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  color:var(--text-secondary)}
+.afoot{margin-top:12px;padding-top:10px;border-top:1px solid var(--rule);
+  font-size:11.5px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+/* Evidence is available, not in the way. */
+details.ev{margin:10px 0}
+details.ev>summary{cursor:pointer;font-size:12.5px;font-weight:600;
+  color:var(--brand-ink);padding:7px 0;list-style:none}
+details.ev>summary::-webkit-details-marker{display:none}
+details.ev>summary::before{content:'▸ ';color:var(--text-muted)}
+details.ev[open]>summary::before{content:'▾ '}
+details.ev>summary:hover{text-decoration:underline}
+
+/* GAME-GROUPED LAYOUT — one band per matchup, one line per team, markets as
+   columns. This is how every book prints a slate, and it turns the six rows a
+   single game produced in the per-outcome table into two. */
+table.gtable{font-size:13px;table-layout:fixed}
+table.gtable th:first-child,table.gtable td:first-child{width:32%}
+table.gtable th:nth-child(2),table.gtable td:nth-child(2),
+table.gtable th:nth-child(3),table.gtable td:nth-child(3),
+table.gtable th:nth-child(4),table.gtable td:nth-child(4){width:16%}
+table.gtable th:last-child,table.gtable td:last-child{width:20%}
+table.gtable th{text-align:center}
+table.gtable th:first-child{text-align:left}
+table.gtable thead th{font-size:11.5px;padding:8px 12px}
+tr.ghead td{background:var(--bg-raised);padding:7px 12px;height:auto;
+  border-bottom:1px solid var(--border);border-top:1px solid var(--border)}
+tr.ghead:hover td,tr.ghead:hover{background:var(--bg-raised)}
+.gcat{display:inline-block;font-size:10.5px;font-weight:700;color:var(--text-muted);
+  min-width:48px}
+.gstart{display:inline-block;font-size:11.5px;font-weight:600;color:var(--text-secondary);
+  min-width:64px;font-variant-numeric:tabular-nums}
+.gname{font-weight:700;font-size:13px;color:var(--text-primary);margin-right:9px}
+.tag.live{border-color:var(--pos);color:#fff;background:var(--pos);font-size:10px}
+.tag.bet{border-color:var(--pos);color:var(--pos);background:#e7f5ec;font-size:10.5px;
+  font-weight:700}
+tr.grow td{height:46px;cursor:pointer}
+/* The flex goes on a WRAPPER inside the cell, never on the <td> itself:
+   `display:flex` on a table cell removes it from table layout, so
+   `table-layout:fixed` stops applying to it and its border renders as a
+   stray rule under the content. */
+.gteam{font-weight:600;padding-left:14px!important;white-space:nowrap;
+  vertical-align:middle}
+.gteamin{display:flex;align-items:center;gap:9px;min-width:0}
+.gteamin>span{overflow:hidden;text-overflow:ellipsis}
+.gteam .vchip{margin:0;flex:0 0 20px}
+.gcell{text-align:center}
+.gprice{display:inline-flex;flex-direction:column;align-items:center;gap:2px;line-height:1.1}
+.gline{font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums;
+  font-weight:600}
+.gedge{font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
+/* The reference edge is visually distinct from a consensus edge, because it
+   is a weaker claim: two venues, not three-plus clusters. */
+.gedge.gref{cursor:help;border-bottom:1px dotted currentColor;padding-bottom:1px}
+.refbadge{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;
+  background:var(--pos);color:#fff;font-size:10.5px;font-weight:700}
+.gtable .oddspill{min-width:76px;padding:7px 12px;font-size:13.5px}
+.gtable .oddspill.bet{border-color:var(--brand);background:var(--brand);color:#fff}
+.gtable tbody tr.grow:hover .oddspill{border-color:var(--brand-ink);
+  background:var(--brand-wash);color:var(--brand-ink)}
+.gtable tbody tr.grow:hover .oddspill.bet{background:var(--brand-ink);color:#fff}
+
+/* THE ODDS BUTTON. On a real book a price is the primary tap target, so it
+   gets button geometry: a filled rounded rect, bold tabular figure, and a
+   brand-blue treatment when the row is actionable. */
+.oddspill{display:inline-block;min-width:62px;padding:5px 11px;border-radius:var(--r-sm);
+  border:1px solid var(--border);background:var(--bg-raised);
+  font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;
+  text-align:center;line-height:1.15;color:var(--text-primary)}
+tr.v-BET .oddspill{border-color:var(--brand);color:#fff;background:var(--brand)}
+tr:hover .oddspill{border-color:var(--brand-ink);background:var(--brand-wash);
+  color:var(--brand-ink)}
+tr.v-BET:hover .oddspill{background:var(--brand-ink);color:#fff}
+
+/* VENUE CHIP — brand-coloured tile + name. This is where all the chroma
+   lives, and it is what makes a row scannable by book at a glance. */
+.vcell{display:inline-flex;align-items:center;gap:7px;min-width:0}
+/* Real logos arrive at mixed sizes (16px ICO up to 128px PNG) and some are
+   transparent PNGs that vanish on a white card, so every chip gets a fixed
+   box, a hairline ring and object-fit containment. */
+.vchip{width:20px;height:20px;flex:0 0 20px;border-radius:5px;display:block;
+  object-fit:contain;background:#fff;border:1px solid var(--border);
+  padding:1px;image-rendering:auto}
+.vchip-lg{width:26px;height:26px;flex:0 0 26px;border-radius:6px}
+.sicon{width:16px;height:16px;vertical-align:-3px;flex:0 0 16px;
+  fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;
+  stroke-linejoin:round;shape-rendering:geometricPrecision}
+
+/* The verdict cell is a flex box so the pill centres on the row instead of
+   sitting on the text baseline -- inline-block pills in a fixed-height row
+   ride high, which is what made this column look broken. */
+/* The pill class belongs to the SPAN, never to the cell. Putting `.vd` on a
+   <th> made the header cell itself render as a floating white pill outside
+   the tinted band — which is exactly what it looked like. */
+tbody td.vdcell{padding-top:0;padding-bottom:0}
+thead th.vdcell{text-align:left}
+.vd{font-size:11px;font-weight:700;display:inline-flex;align-items:center;
+  line-height:1;padding:4px 9px;border-radius:999px;border:1px solid transparent;
+  white-space:nowrap;vertical-align:middle}
+.vd-BET{background:var(--pos);border-color:var(--pos);color:#fff;
+  box-shadow:0 1px 3px rgba(11,122,59,.28)}
+.vd-THIN{color:var(--warn);border-color:#e5cf9a;background:#fdf6e6}
+.vd-AGED{color:var(--serious);border-color:#e8c9b0;background:#fdf1e9;
+  border-style:dashed}
+.vd-SUSPECT{color:var(--neg-mark);border-color:#e6bbb7;background:#fdeceb;
+  border-style:dotted}
+.vd-LIMITED{color:var(--text-secondary);border-color:var(--border);background:var(--bg-raised)}
+.vd-PASS,.vd-NOPRICE{color:var(--text-muted);font-weight:500;border-color:transparent;
+  background:transparent;padding-left:0;padding-right:0}
+
+/* A column whose name is jargon must LOOK explainable. The dotted underline
+   is the affordance; the title attribute is the explanation. Applied to the
+   label span rather than the cell so a right-aligned numeric header does not
+   show a rule floating away from its own word. */
+/* The tooltip itself. Appears instantly, wraps to a readable measure, and is
+   clamped to the viewport by the positioning code. */
+#vbtip{position:fixed;z-index:200;max-width:330px;padding:9px 12px;
+  background:#0b1220;color:#f7fafd;border-radius:8px;font-size:12.5px;
+  line-height:1.42;font-weight:400;pointer-events:none;opacity:0;
+  visibility:hidden;box-shadow:0 6px 22px rgba(11,18,32,.32);
+  transition:opacity .09s ease}
+#vbtip.on{opacity:1;visibility:visible}
+
+thead th.hasgloss{cursor:help}
+thead th .gl{border-bottom:1px dotted var(--border-strong);padding-bottom:1px}
+thead th.hasgloss:hover .gl{border-bottom-color:var(--brand);color:var(--brand-ink)}
+
+.why{color:var(--text-muted);font-size:11.5px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:240px}
+/* Real matchup names need room; the synthetic slate did not. */
+tbody td.k[data-tip]{cursor:help}
+.lowN{color:var(--text-muted)}
+.tie{color:var(--text-muted);font-size:11px;font-weight:600}
+
+tr.noiseline td{border-top:2px dashed var(--border-strong);border-bottom:none;
+  height:26px;padding:6px 9px 4px;color:var(--text-muted);font-size:11.5px;
+  background:var(--bg-row-alt);font-weight:600}
+tr.noiseline:hover,tr.noiseline:hover td{background:var(--bg-row-alt)}
+
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:12.5px}
+.kv dt{color:var(--text-muted);white-space:nowrap;font-size:12px}
+.kv dd{font-variant-numeric:tabular-nums;text-align:right;font-weight:600}
+
+.bar{height:8px;background:var(--bg-raised);border:0;border-radius:999px;
+  overflow:hidden;min-width:96px}
+.bar>i{display:block;height:100%;background:var(--brand);border-radius:999px}
+
+.tag{display:inline-block;padding:1px 7px;border:1px solid var(--border);
+  border-radius:999px;font-size:11px;color:var(--text-secondary);
+  background:var(--bg-raised);font-weight:600}
+.tag.t1{border-color:var(--brand);color:var(--brand-ink);background:var(--brand-wash)}
+.tag.demo{border-color:#d9a400;color:#3d2a00;background:#ffd24a}
+
+.note{border:1px solid var(--border);border-left:3px solid var(--border-strong);
+  border-radius:var(--r-sm);padding:8px 11px;color:var(--text-secondary);
+  font-size:12.5px;margin:9px 0;background:var(--bg-surface)}
+.note.w{border-left-color:var(--warn);background:#fffdf6}
+.note.c{border-left-color:var(--neg-mark);background:#fffaf9}
+
+.empty{padding:38px 14px;color:var(--text-secondary);font-size:13px;text-align:center;
+  background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r)}
+.empty b{display:block;font-size:17px;font-weight:700;color:var(--text-primary);
+  margin-bottom:7px}
+
+#scrim{position:fixed;inset:0;background:rgba(16,19,25,.5);z-index:100;display:none;
+  align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(2px)}
+#scrim.on{display:flex}
+#scrim .box{background:var(--bg-surface);border:0;border-radius:14px;max-width:620px;
+  width:100%;padding:22px 24px;max-height:92vh;overflow:auto;
+  box-shadow:0 18px 50px rgba(16,19,25,.28)}
+
+#boot{display:none;position:fixed;top:var(--h-strip);left:0;right:0;z-index:90;
+  background:#fdeceb;border-bottom:1px solid var(--neg-mark);color:var(--neg-mark);
+  padding:9px 14px;font-family:var(--mono);font-size:11.5px}
+html[data-vb-boot="error"] #boot{display:block}
+#badge{position:fixed;bottom:8px;right:8px;z-index:70;background:var(--bg-head);
+  border:0;border-radius:999px;padding:4px 12px;font-size:11px;
+  color:rgba(247,249,252,.72);font-variant-numeric:tabular-nums;
+  box-shadow:0 2px 10px rgba(16,19,25,.2)}
+#rgfoot{position:fixed;bottom:0;left:0;z-index:65;padding:5px 12px;font-size:11px;
+  color:var(--text-muted)}
+
+svg text{font-family:var(--sans);font-size:10px;fill:var(--text-muted);
+  font-variant-numeric:tabular-nums}
+.spark{display:block}
+@media (prefers-reduced-motion:no-preference){
+  tbody tr{transition:background .1s}
+  button,.chip,.oddspill{transition:background .12s,border-color .12s}
+}
+@media print{
+  html,body{background:#fff;padding-top:0}
+  nav,#badge,#rgfoot,#scrim,button{display:none!important}
+  #demostrip,#boot,#filters,thead th{position:static}
+  main{padding:0}
+  .panel,tbody tr,table{break-inside:avoid;box-shadow:none}
+}
+@media (forced-colors:active){
+  .chip.on,.vd-BET,button.pri{forced-color-adjust:none}
+  .bar{border:1px solid CanvasText}
+  .bar>i{background:CanvasText}
+}
+</style>
+</head>
+<body>
+<!-- Sport icons. Verified by rendering at 16px in a real browser and iterating:
+     an earlier tennis racquet read as a magnifying glass and an earlier glove read
+     as a coffee mug. Simplified for 16px specifically -- football laces are a single
+     bar, basketballs are a bare cross, filled marks (pennants, flag, pentagon,
+     arrowhead, puck) are solid because outlines that small turn to mush. The
+     collegiate marker is a filled pennant applied identically to NCAAF and NCAAB,
+     with the ball scaled to make room -- a distinct added element, not a shape tweak.
+     Same-document href fragments only: no url(), no xlink, no external reference. -->
+<svg style="display:none" aria-hidden="true">
+<symbol id="s-NFL" viewBox="0 0 24 24"><g transform="rotate(-32 12 12)"><path d="M3 12c3-4.5 5.8-6.2 9-6.2s6 1.7 9 6.2c-3 4.5-5.8 6.2-9 6.2s-6-1.7-9-6.2Z"/><path d="M9.2 12h5.6"/></g></symbol>
+<symbol id="s-NCAAF" viewBox="0 0 24 24"><g transform="translate(-1.6 2.2) scale(0.83)"><g transform="rotate(-32 12 12)"><path d="M3 12c3-4.5 5.8-6.2 9-6.2s6 1.7 9 6.2c-3 4.5-5.8 6.2-9 6.2s-6-1.7-9-6.2Z"/><path d="M9.2 12h5.6"/></g></g><path d="M17.6 2v6.6"/><path d="M17.6 2.5l5 1.75-5 1.75Z" fill="currentColor" stroke="none"/></symbol>
+<symbol id="s-MLB" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M9.6 5.2Q5 12 9.6 18.8"/><path d="M14.4 5.2Q19 12 14.4 18.8"/></symbol>
+<symbol id="s-NBA" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 3.4v17.2"/><path d="M3.4 12h17.2"/></symbol>
+<symbol id="s-NCAAB" viewBox="0 0 24 24"><g transform="translate(-1.6 2.2) scale(0.83)"><circle cx="12" cy="12" r="8.6"/><path d="M12 3.4v17.2"/><path d="M3.4 12h17.2"/></g><path d="M17.6 2v6.6"/><path d="M17.6 2.5l5 1.75-5 1.75Z" fill="currentColor" stroke="none"/></symbol>
+<symbol id="s-NHL" viewBox="0 0 24 24"><g transform="rotate(-12 12 12)"><path d="M7.8 3.2v11.4a3 3 0 0 0 3 3h5.6"/></g><ellipse cx="18.8" cy="19.6" rx="2.9" ry="1.45" fill="currentColor" stroke="none"/></symbol>
+<symbol id="s-SOC" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 8.2l3.2 2.3-1.2 3.8h-4l-1.2-3.8Z" fill="currentColor" stroke="none"/><path d="M12 8.2V4.2M15.2 10.5l3.7-1.4M8.8 10.5 5.1 9.1M14 14.3l2.4 3.1M10 14.3 7.6 17.4"/></symbol>
+<symbol id="s-TEN" viewBox="0 0 24 24"><ellipse cx="14.2" cy="9.2" rx="6.2" ry="6.9"/><path d="M14.2 3.6v11.2M9 9h10.4"/><path d="M10.1 14.4 4.4 20.1"/><path d="M3 18.6 5.4 21"/></symbol>
+<symbol id="s-MMA" viewBox="0 0 24 24"><path d="M5 9.6A4.6 4.6 0 0 1 9.6 5h4.8A4.6 4.6 0 0 1 19 9.6v3.1a4.3 4.3 0 0 1-4.3 4.3H9.3A4.3 4.3 0 0 1 5 12.7Z"/><path d="M8.6 17v-3.3a2.5 2.5 0 0 0-2.5-2.5H5"/><path d="M9.4 17v2.8h5.2V17"/></symbol>
+<symbol id="s-GOLF" viewBox="0 0 24 24"><path d="M8 3.6V20"/><path d="M8 4.4l7.6 2.7L8 9.8Z" fill="currentColor" stroke="none"/><path d="M3.5 20h13"/></symbol>
+<symbol id="s-POL" viewBox="0 0 24 24"><path d="M4.5 11.5h4.6M14.9 11.5h4.6"/><path d="M4.5 11.5v8h15v-8"/><path d="M9.1 11.5V6.6h5.8v4.9"/></symbol>
+<symbol id="s-ECON" viewBox="0 0 24 24"><path d="M4 3.5v17h17"/><path d="M7.5 16.2l4-4.2 2.8 2.6 4.4-5.2"/><path d="M14.6 9.4h4.6V14Z" fill="currentColor" stroke="none"/></symbol>
+<symbol id="s-AWD" viewBox="0 0 24 24"><path d="M12 3.2l2.75 5.65 6.25.88-4.5 4.4 1.05 6.2L12 17.2l-5.55 3.13 1.05-6.2-4.5-4.4 6.25-.88Z"/></symbol>
+<symbol id="s-TECH" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.8"/><rect x="10.4" y="10.4" width="3.2" height="3.2" rx="0.8" fill="currentColor" stroke="none"/><path d="M10 6.5V3.6M14 6.5V3.6M10 17.5v2.9M14 17.5v2.9M6.5 10H3.6M6.5 14H3.6M17.5 10h2.9M17.5 14h2.9"/></symbol>
+<symbol id="s-OTHER" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 16.2v.01M12 13.2c0-2 2.2-2.2 2.2-3.9A2.2 2.2 0 0 0 9.9 9"/></symbol>
+</svg>
+<div id="demostrip"></div>
+<nav id="nav"></nav>
+<div id="boot"></div>
+<main id="app"></main>
+<div id="scrim"><div class="box" id="scrimbox"></div></div>
+<div id="rgfoot"></div>
+<div id="badge">booting…</div>
