@@ -1,8 +1,0 @@
-<!DOCTYPE html><html><body><div id="o">p</div><script>
-(async()=>{const L=[];const t=async(n,u)=>{try{const r=await fetch(u,{mode:'cors',credentials:'omit'});
-L.push(n.padEnd(26)+'HTTP '+r.status+'  READABLE');}catch(e){L.push(n.padEnd(26)+'BLOCKED '+e.message);}};
-await t('the-odds-api','https://api.the-odds-api.com/v4/sports/?apiKey=probe');
-await t('cdn.espn.com','https://cdn.espn.com/core/nfl/scoreboard?xhr=1');
-await t('polymarket gamma','https://gamma-api.polymarket.com/markets?limit=2');
-document.getElementById('o').textContent='ORIGIN='+location.origin+'\n'+L.join('\n');})();
-</script></body></html>
