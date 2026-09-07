@@ -175,12 +175,26 @@ VB.consensus = (function () {
     const o = opts || {};
     const excludeCluster = o.excludeCluster || null;
     const keep = [];
+    let unusable = 0;
     venues.forEach((v, i) => {
       if (excludeCluster && (v.cluster || v.id) === excludeCluster) return;
       if (!v.includeInConsensus) return;
+      /* A logit pool has no immunity to one bad member: a single non-finite
+         probability propagates through the weighted mean and every outcome
+         comes back NaN, with ok:true, so the caller reports a fair price of
+         "--" on every row instead of a failure. Screen the members here, at
+         the point where the invariant is cheap to state: a voter must carry
+         a finite probability strictly inside (0,1) for every outcome. */
+      const pv = perVenueProbs[i];
+      if (!pv || pv.length !== (perVenueProbs[0] || []).length) { unusable++; return; }
+      for (let k = 0; k < pv.length; k++) {
+        if (!(Number.isFinite(pv[k]) && pv[k] > 0 && pv[k] < 1)) { unusable++; return; }
+      }
       keep.push(i);
     });
-    if (!keep.length) return { ok: false, reason: 'no_voters' };
+    if (!keep.length) {
+      return { ok: false, reason: unusable ? 'no_usable_probs' : 'no_voters', unusable };
+    }
 
     const kv = keep.map(i => venues[i]);
     const raw = rawWeights(kv, o.isLive);

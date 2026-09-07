@@ -42,11 +42,33 @@ VB.pipe = (function () {
       if (!complete) continue;         /* an incomplete set cannot be devigged */
 
       let probs, md = null, bDevig = 0;
-      if (v.model === 'order_book') {
-        /* Exchanges and prediction markets are NOT devigged: the mid of a
-           two-sided book is already near vig-free, and commission applies
-           to YOUR EXECUTION, not to the venue's implied probability.
-           Devigging a Betfair mid double-counts. */
+      /* An exchange is only an order book if the feed actually carried the
+         book. Betfair and Matchbook arrive from The Odds API as plain back
+         prices with no depth at all, and midpoint(null, null) is NaN -- one
+         such venue in the pool turned every fair price in the market into
+         NaN, because a logit pool has no immunity to a single bad member.
+         Measured on a 20-book NFL market: 38 of 40 rows lost their fair
+         price, and the two that survived were the exchange's own rows,
+         which are the only ones that exclude its cluster.
+         So the treatment follows the DATA, not the venue's label: with a
+         two-sided book, use the mid; with back prices only, de-vig them
+         like any other price. The "do not devig an exchange" rule is about
+         a MID, which is already near vig-free. A back price is not a mid --
+         it carries the exchange's spread on one side, so de-vigging the two
+         back prices is the correct treatment, not a double-count. */
+      /* Number.isFinite, not the global isFinite, and the difference is the
+         whole bug: the global one coerces, so isFinite(null) is true --
+         a missing bid reads as present, the mid comes back NaN, and the
+         pool it feeds is NaN too. Every depth check here is strict. */
+      let hasBook = v.model === 'order_book';
+      if (hasBook) {
+        for (let i = 0; i < nOut; i++) {
+          if (!Number.isFinite(row[i].bidProb) || !Number.isFinite(row[i].askProb)) {
+            hasBook = false; break;
+          }
+        }
+      }
+      if (hasBook) {
         const mid = [];
         for (let i = 0; i < nOut; i++) mid.push(D.midpoint(row[i].bidProb, row[i].askProb));
         const Z = mid.reduce((a, b) => a + b, 0);
@@ -55,7 +77,9 @@ VB.pipe = (function () {
                                           carries less model risk than a devig, but
                                           not none. */
       } else {
-        md = D.medianDevig(row.map(q => q.dGross));
+        const ds = [];
+        for (let i = 0; i < nOut; i++) ds.push(row[i].dGross);
+        md = D.medianDevig(ds);
         probs = md.p;
         /* b_devig is a BIAS FLOOR, not just the observed method spread.
            On a symmetric two-way market all four methods coincide, so the
@@ -71,8 +95,16 @@ VB.pipe = (function () {
         spreadCents: row[0].spreadCents,
         limitUsd: v.limitUsd
       }));
+      /* A venue that still cannot produce usable probabilities does not
+         join the pool at all. Dropping it costs one voter; letting it in
+         costs every fair price in the market. */
+      let usable = true;
+      for (let i = 0; i < nOut; i++) {
+        if (!(Number.isFinite(probs[i]) && probs[i] > 0 && probs[i] < 1)) { usable = false; break; }
+      }
+      if (!usable) { vList.pop(); continue; }
       vProbs.push(probs);
-      vMeta.push({ vid, row, md, bDevig });
+      vMeta.push({ vid, row, md, bDevig, priceOnlyExchange: v.model === 'order_book' && !hasBook });
     }
 
     /* One offer row per (venue, outcome). Each gets its OWN consensus with

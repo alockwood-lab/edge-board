@@ -1130,12 +1130,26 @@ VB.consensus = (function () {
     const o = opts || {};
     const excludeCluster = o.excludeCluster || null;
     const keep = [];
+    let unusable = 0;
     venues.forEach((v, i) => {
       if (excludeCluster && (v.cluster || v.id) === excludeCluster) return;
       if (!v.includeInConsensus) return;
+      /* A logit pool has no immunity to one bad member: a single non-finite
+         probability propagates through the weighted mean and every outcome
+         comes back NaN, with ok:true, so the caller reports a fair price of
+         "--" on every row instead of a failure. Screen the members here, at
+         the point where the invariant is cheap to state: a voter must carry
+         a finite probability strictly inside (0,1) for every outcome. */
+      const pv = perVenueProbs[i];
+      if (!pv || pv.length !== (perVenueProbs[0] || []).length) { unusable++; return; }
+      for (let k = 0; k < pv.length; k++) {
+        if (!(Number.isFinite(pv[k]) && pv[k] > 0 && pv[k] < 1)) { unusable++; return; }
+      }
       keep.push(i);
     });
-    if (!keep.length) return { ok: false, reason: 'no_voters' };
+    if (!keep.length) {
+      return { ok: false, reason: unusable ? 'no_usable_probs' : 'no_voters', unusable };
+    }
 
     const kv = keep.map(i => venues[i]);
     const raw = rawWeights(kv, o.isLive);
@@ -2364,11 +2378,33 @@ VB.pipe = (function () {
       if (!complete) continue;         /* an incomplete set cannot be devigged */
 
       let probs, md = null, bDevig = 0;
-      if (v.model === 'order_book') {
-        /* Exchanges and prediction markets are NOT devigged: the mid of a
-           two-sided book is already near vig-free, and commission applies
-           to YOUR EXECUTION, not to the venue's implied probability.
-           Devigging a Betfair mid double-counts. */
+      /* An exchange is only an order book if the feed actually carried the
+         book. Betfair and Matchbook arrive from The Odds API as plain back
+         prices with no depth at all, and midpoint(null, null) is NaN -- one
+         such venue in the pool turned every fair price in the market into
+         NaN, because a logit pool has no immunity to a single bad member.
+         Measured on a 20-book NFL market: 38 of 40 rows lost their fair
+         price, and the two that survived were the exchange's own rows,
+         which are the only ones that exclude its cluster.
+         So the treatment follows the DATA, not the venue's label: with a
+         two-sided book, use the mid; with back prices only, de-vig them
+         like any other price. The "do not devig an exchange" rule is about
+         a MID, which is already near vig-free. A back price is not a mid --
+         it carries the exchange's spread on one side, so de-vigging the two
+         back prices is the correct treatment, not a double-count. */
+      /* Number.isFinite, not the global isFinite, and the difference is the
+         whole bug: the global one coerces, so isFinite(null) is true --
+         a missing bid reads as present, the mid comes back NaN, and the
+         pool it feeds is NaN too. Every depth check here is strict. */
+      let hasBook = v.model === 'order_book';
+      if (hasBook) {
+        for (let i = 0; i < nOut; i++) {
+          if (!Number.isFinite(row[i].bidProb) || !Number.isFinite(row[i].askProb)) {
+            hasBook = false; break;
+          }
+        }
+      }
+      if (hasBook) {
         const mid = [];
         for (let i = 0; i < nOut; i++) mid.push(D.midpoint(row[i].bidProb, row[i].askProb));
         const Z = mid.reduce((a, b) => a + b, 0);
@@ -2377,7 +2413,9 @@ VB.pipe = (function () {
                                           carries less model risk than a devig, but
                                           not none. */
       } else {
-        md = D.medianDevig(row.map(q => q.dGross));
+        const ds = [];
+        for (let i = 0; i < nOut; i++) ds.push(row[i].dGross);
+        md = D.medianDevig(ds);
         probs = md.p;
         /* b_devig is a BIAS FLOOR, not just the observed method spread.
            On a symmetric two-way market all four methods coincide, so the
@@ -2393,8 +2431,16 @@ VB.pipe = (function () {
         spreadCents: row[0].spreadCents,
         limitUsd: v.limitUsd
       }));
+      /* A venue that still cannot produce usable probabilities does not
+         join the pool at all. Dropping it costs one voter; letting it in
+         costs every fair price in the market. */
+      let usable = true;
+      for (let i = 0; i < nOut; i++) {
+        if (!(Number.isFinite(probs[i]) && probs[i] > 0 && probs[i] < 1)) { usable = false; break; }
+      }
+      if (!usable) { vList.pop(); continue; }
       vProbs.push(probs);
-      vMeta.push({ vid, row, md, bDevig });
+      vMeta.push({ vid, row, md, bDevig, priceOnlyExchange: v.model === 'order_book' && !hasBook });
     }
 
     /* One offer row per (venue, outcome). Each gets its OWN consensus with
@@ -7015,6 +7061,59 @@ VB.selftest = (function () {
     if (alt.eventId !== 'LE_3') return 'input market eventId was rewritten in place';
     if (b.quotes.length !== 2) return 'input market quotes were mutated';
     return a.quotes.length === 2 || 'base market quotes were mutated';
+  });
+
+  t('A-pool one unusable voter must not NaN the whole consensus', () => {
+    const vs = [
+      { id:'a', cluster:'a', tier:1, includeInConsensus:true, enabled:true, limitUsd:1000, ageSec:5 },
+      { id:'b', cluster:'b', tier:2, includeInConsensus:true, enabled:true, limitUsd:1000, ageSec:5 },
+      { id:'c', cluster:'c', tier:2, includeInConsensus:true, enabled:true, limitUsd:1000, ageSec:5 },
+      { id:'d', cluster:'d', tier:2, includeInConsensus:true, enabled:true, limitUsd:1000, ageSec:5 }
+    ];
+    const good = [[0.62,0.38],[0.63,0.37],[0.61,0.39],[0.62,0.38]];
+    const base = C.build(vs, good, {});
+    if (!base.ok || !isFinite(base.p[0])) return 'clean pool must build';
+    const poisoned = good.map((x, i) => i === 2 ? [NaN, NaN] : x.slice());
+    const r = C.build(vs, poisoned, {});
+    if (!r.ok) return 'one bad voter must not fail the whole build, got ' + r.reason;
+    if (!isFinite(r.p[0]) || !isFinite(r.p[1])) return 'pool is NaN: ' + r.p.join(',');
+    if (r.nVoters !== 3) return 'the bad voter must be excluded, nVoters=' + r.nVoters;
+    /* And if every voter is unusable it must FAIL, not return NaN as truth. */
+    const allBad = C.build(vs, good.map(() => [NaN, NaN]), {});
+    return (!allBad.ok && allBad.reason === 'no_usable_probs')
+      || 'all-unusable must report no_usable_probs, got ' + allBad.ok + '/' + allBad.reason;
+  });
+
+  t('A-exch an exchange with no depth is de-vigged, not read as a NaN mid', () => {
+    const venues = {
+      /* An exchange as the feed actually delivers it: back prices, no book. */
+      ex:  { id:'ex', name:'Ex', cluster:'ex', tier:1, model:'order_book',
+             includeInConsensus:true, enabled:true, accessible:true, limitUsd:1000, claHist:0.0005 },
+      b1:  { id:'b1', name:'B1', cluster:'b1', tier:2, model:'fixed_odds',
+             includeInConsensus:true, enabled:true, accessible:true, limitUsd:1000, claHist:0.0005 },
+      b2:  { id:'b2', name:'B2', cluster:'b2', tier:2, model:'fixed_odds',
+             includeInConsensus:true, enabled:true, accessible:true, limitUsd:1000, claHist:0.0005 },
+      b3:  { id:'b3', name:'B3', cluster:'b3', tier:2, model:'fixed_odds',
+             includeInConsensus:true, enabled:true, accessible:true, limitUsd:1000, claHist:0.0005 }
+    };
+    const px = { ex:[1.58,2.68], b1:[1.55,2.55], b2:[1.57,2.60], b3:[1.56,2.58] };
+    const quotes = [];
+    for (const id in px) for (let i = 0; i < 2; i++) {
+      quotes.push({ venueId:id, outcomeIx:i, dGross:px[id][i],
+                    bidProb:null, askProb:null,   /* <- isFinite(null) is true */
+                    spreadCents:null, ageSec:5, ts:1 });
+    }
+    const m = { id:'X', eventId:'E', cat:'NFL', kind:'moneyline', marketLabel:'MONEYLINE',
+                eventLabel:'A @ B', outcomes:['home','away'], line:null,
+                startSec:3600, isLive:false, pairConfidence:1, srcId:'merged', quotes };
+    const rows = VB.pipe.phaseA(m, venues, VB.pipe.DEFAULTS).rows;
+    if (rows.length !== 8) return 'expected 8 offer rows, got ' + rows.length;
+    const nan = rows.filter(r => !isFinite(r.pFair));
+    if (nan.length) return nan.length + ' of 8 rows have a NaN fair price (venues: ' +
+      [...new Set(nan.map(r => r.venueId))].join(',') + ')';
+    const ex = rows.find(r => r.venueId === 'ex' && r.side === 'home');
+    return (ex && isFinite(ex.pOwnDevig) && ex.pOwnDevig > 0.5 && ex.pOwnDevig < 0.7)
+      || 'the exchange own-price should devig to ~63%, got ' + (ex && ex.pOwnDevig);
   });
 
   function run() {

@@ -328,6 +328,59 @@ VB.selftest = (function () {
     return a.quotes.length === 2 || 'base market quotes were mutated';
   });
 
+  t('A-pool one unusable voter must not NaN the whole consensus', () => {
+    const vs = [
+      { id:'a', cluster:'a', tier:1, includeInConsensus:true, enabled:true, limitUsd:1000, ageSec:5 },
+      { id:'b', cluster:'b', tier:2, includeInConsensus:true, enabled:true, limitUsd:1000, ageSec:5 },
+      { id:'c', cluster:'c', tier:2, includeInConsensus:true, enabled:true, limitUsd:1000, ageSec:5 },
+      { id:'d', cluster:'d', tier:2, includeInConsensus:true, enabled:true, limitUsd:1000, ageSec:5 }
+    ];
+    const good = [[0.62,0.38],[0.63,0.37],[0.61,0.39],[0.62,0.38]];
+    const base = C.build(vs, good, {});
+    if (!base.ok || !isFinite(base.p[0])) return 'clean pool must build';
+    const poisoned = good.map((x, i) => i === 2 ? [NaN, NaN] : x.slice());
+    const r = C.build(vs, poisoned, {});
+    if (!r.ok) return 'one bad voter must not fail the whole build, got ' + r.reason;
+    if (!isFinite(r.p[0]) || !isFinite(r.p[1])) return 'pool is NaN: ' + r.p.join(',');
+    if (r.nVoters !== 3) return 'the bad voter must be excluded, nVoters=' + r.nVoters;
+    /* And if every voter is unusable it must FAIL, not return NaN as truth. */
+    const allBad = C.build(vs, good.map(() => [NaN, NaN]), {});
+    return (!allBad.ok && allBad.reason === 'no_usable_probs')
+      || 'all-unusable must report no_usable_probs, got ' + allBad.ok + '/' + allBad.reason;
+  });
+
+  t('A-exch an exchange with no depth is de-vigged, not read as a NaN mid', () => {
+    const venues = {
+      /* An exchange as the feed actually delivers it: back prices, no book. */
+      ex:  { id:'ex', name:'Ex', cluster:'ex', tier:1, model:'order_book',
+             includeInConsensus:true, enabled:true, accessible:true, limitUsd:1000, claHist:0.0005 },
+      b1:  { id:'b1', name:'B1', cluster:'b1', tier:2, model:'fixed_odds',
+             includeInConsensus:true, enabled:true, accessible:true, limitUsd:1000, claHist:0.0005 },
+      b2:  { id:'b2', name:'B2', cluster:'b2', tier:2, model:'fixed_odds',
+             includeInConsensus:true, enabled:true, accessible:true, limitUsd:1000, claHist:0.0005 },
+      b3:  { id:'b3', name:'B3', cluster:'b3', tier:2, model:'fixed_odds',
+             includeInConsensus:true, enabled:true, accessible:true, limitUsd:1000, claHist:0.0005 }
+    };
+    const px = { ex:[1.58,2.68], b1:[1.55,2.55], b2:[1.57,2.60], b3:[1.56,2.58] };
+    const quotes = [];
+    for (const id in px) for (let i = 0; i < 2; i++) {
+      quotes.push({ venueId:id, outcomeIx:i, dGross:px[id][i],
+                    bidProb:null, askProb:null,   /* <- isFinite(null) is true */
+                    spreadCents:null, ageSec:5, ts:1 });
+    }
+    const m = { id:'X', eventId:'E', cat:'NFL', kind:'moneyline', marketLabel:'MONEYLINE',
+                eventLabel:'A @ B', outcomes:['home','away'], line:null,
+                startSec:3600, isLive:false, pairConfidence:1, srcId:'merged', quotes };
+    const rows = VB.pipe.phaseA(m, venues, VB.pipe.DEFAULTS).rows;
+    if (rows.length !== 8) return 'expected 8 offer rows, got ' + rows.length;
+    const nan = rows.filter(r => !isFinite(r.pFair));
+    if (nan.length) return nan.length + ' of 8 rows have a NaN fair price (venues: ' +
+      [...new Set(nan.map(r => r.venueId))].join(',') + ')';
+    const ex = rows.find(r => r.venueId === 'ex' && r.side === 'home');
+    return (ex && isFinite(ex.pOwnDevig) && ex.pOwnDevig > 0.5 && ex.pOwnDevig < 0.7)
+      || 'the exchange own-price should devig to ~63%, got ' + (ex && ex.pOwnDevig);
+  });
+
   function run() {
     const out = [];
     for (const x of T) {
