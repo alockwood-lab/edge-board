@@ -13,13 +13,7 @@ VB.games = (function () {
      The per-outcome table is still available as the "Rows" layout, because
      that is where the error budget and the consensus internals live. */
 
-  function splitTeams(label) {
-    for (const sep of [' @ ', ' v ', ' vs ', ' VS ']) {
-      const i = label.indexOf(sep);
-      if (i > 0) return { away: label.slice(0, i), home: label.slice(i + sep.length), sep };
-    }
-    return { away: label, home: '', sep: null };
-  }
+  const splitTeams = VB.dom.splitTeams;
 
   /* Collapse the offer rows for one event into a per-team, per-market grid.
      Where several venues quote the same outcome we keep the BEST net price,

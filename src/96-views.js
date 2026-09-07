@@ -71,7 +71,17 @@ VB.model = (function () {
       accessibleOnly: st.accessibleOnly && !accSuspended
     });
     let rows = [], byMarket = {};
-    for (const m of M.slate.markets) {
+    /* Join the feeds before pricing, never after. The consensus, the gates
+       and the stake all read one market object, so a game split across two
+       feeds has to be one market by the time it reaches phaseA -- otherwise
+       the bettable book and the books that judge it are in different
+       objects and no edge is computable. Raw per-source markets stay in
+       M.slate.markets so refresh-in-place still works; the merge is derived
+       and recomputed on every compute. */
+    const priced = VB.live.mergeSources(M.slate.markets);
+    M.merged = { input: M.slate.markets.length, output: priced.length,
+                 joined: priced.filter(m => m.mergedFrom).length };
+    for (const m of priced) {
       const a = P.phaseA(m, M.venues, opts);
       const arb = P.arbForMarket(m, a.rows);
       if (arb && arb.det.isArb) {
@@ -87,6 +97,9 @@ VB.model = (function () {
         }
       }
       byMarket[m.id] = { market:m, rows:a.rows, arb };
+      /* A merged market answers to every id it absorbed, so a drill-down
+         link opened before the join still resolves after it. */
+      if (m.mergedFrom) for (const alias of m.mergedFrom) byMarket[alias] = byMarket[m.id];
       rows = rows.concat(a.rows);
     }
     const nEval = rows.length;
@@ -414,7 +427,22 @@ VB.model = (function () {
            not, the guards must not block the fetch. */
         const cache0 = readCache();
         const hit0 = cache0[cat];
-        const haveUsable = !!(hit0 && (Date.now() - hit0.at) < ODDS_STALE_MAX_MS);
+        /* "Usable" has to mean usable FOR THE THING THE APP DOES. A cached
+           pull carrying one or two books is bytes on disk, not a board: the
+           consensus gate needs 3 independent groups, so a two-book cache
+           leaves every market unpriced. Treating that as usable is what let
+           the pace and no-games guards sit on a one-book board -- the guards
+           were right, the predicate was wrong. */
+        const fresh0 = !!(hit0 && (Date.now() - hit0.at) < ODDS_STALE_MAX_MS);
+        let cachedBooks = 0;
+        if (fresh0) {
+          const seen = {};
+          for (const ev of (Array.isArray(hit0.raw) ? hit0.raw : [])) {
+            for (const bk of (ev.bookmakers || [])) seen[bk.key] = 1;
+          }
+          cachedBooks = Object.keys(seen).length;
+        }
+        const haveUsable = fresh0 && cachedBooks >= 3;
         const dec = VB.budget.decide({ gamesWithinH: gamesSoon, cost: 3,
           haveUsableData: haveUsable,
           remainingHeader: (M.oddsQuota && M.oddsQuota.remaining) });

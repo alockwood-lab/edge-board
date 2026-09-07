@@ -181,8 +181,18 @@ VB.adapters = (function () {
               points.push(o.point === undefined ? null : Number(o.point));
             }
             if (!ok) { rejected++; continue; }
+            /* The handicap has to be carried in ONE orientation or the same
+               market splits in two. `line` was the first non-null point,
+               i.e. the point of whichever side the book happened to list
+               first -- so a book listing the away team first landed under
+               +3.5 while the rest sat under -3.5, halving the book count on
+               both. homeLine pins it to the home side, which is also the
+               orientation ESPN publishes, so the two feeds can be matched. */
+            const hix = sides.indexOf('home');
+            const homeLine = (hix >= 0 && points[hix] !== null && points[hix] !== undefined)
+              ? Number(points[hix]) : null;
             quotes.push({
-              srcId: 'oddsapi', venueId: bk.key, venueLabel: bk.title,
+              srcId: 'oddsapi', venueId: bk.key, venueLabel: bk.title, homeLine,
               nativeId: ev.id, sportKey: ev.sport_key,
               eventLabel: (away && home) ? (away + ' @ ' + home) : (ev.sport_title || ''),
               home, away,

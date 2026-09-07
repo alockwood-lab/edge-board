@@ -245,6 +245,10 @@ tbody td.k{font-weight:600}
   border-radius:999px;color:#fff;white-space:nowrap}
 .averdict.no{background:var(--neg)}
 .averdict.yes{background:var(--pos)}
+/* NO CALL is not a negative verdict, it is the absence of one, so it must not
+   wear the same red as "we priced this and it is bad". */
+.averdict.na{background:var(--text-muted)}
+.answer.na{border-left-color:var(--border-strong)}
 .aline{font-size:17px;font-weight:700;letter-spacing:-.01em}
 .asent{margin-top:9px;font-size:13px;color:var(--text-secondary);max-width:88ch;
   line-height:1.5}

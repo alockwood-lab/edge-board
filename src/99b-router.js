@@ -1,7 +1,8 @@
 /* ========================== L4  router and boot ======================== */
 VB.selftest = (function () {
   const U = VB.util, O = VB.odds, D = VB.devig, C = VB.consensus,
-        K = VB.stake, A = VB.arb, MU = VB.multiplicity, SC = VB.score;
+        K = VB.stake, A = VB.arb, MU = VB.multiplicity, SC = VB.score,
+        LV = VB.live;
   const T = [];
   const eq = (a, b, tol) => Math.abs(a - b) <= (tol === undefined ? 1e-12 : tol);
   function t(name, fn) { T.push({ name, fn }); }
@@ -240,6 +241,93 @@ VB.selftest = (function () {
     return !A.isQuoteOutlier(0.50, 0.425, 8, 0.00125) || '7.5pp from a soft book must be allowed';
   });
 
+  /* The cross-source join sits on the pricing path: a wrong pair invents an
+     edge out of two different games, which is the worst failure this app
+     has. So the refusals are asserted as hard as the joins. */
+  const mkt = (o) => Object.assign({
+    cat:'NFL', kind:'moneyline', line:null, eventLabel:'Away Team @ Home Team',
+    startMs: 1.7e12, srcId:'espn', eventId:'E1', id:'M1',
+    outcomes:['home','away'], quotes:[], pairConfidence:1
+  }, o);
+  const q = (venueId, ix, d, ageSec) => ({ venueId, outcomeIx:ix, dGross:d,
+    bidProb:null, askProb:null, spreadCents:null, ageSec: ageSec === undefined ? 10 : ageSec,
+    ts: 1, srcId:'x' });
+
+  t('A-merge joins two feeds on one market and maps reversed sides by name', () => {
+    const a = mkt({ id:'ESM9', eventId:'ES_9', srcId:'espn',
+      outcomes:['home','away'], quotes:[q('draftkings',0,1.55), q('draftkings',1,2.50)] });
+    const b = mkt({ id:'L_9', eventId:'LE_9', srcId:'oddsapi',
+      outcomes:['away','home'],   /* reversed on purpose */
+      quotes:[q('pinnacle',0,2.55), q('pinnacle',1,1.58)] });
+    const out = LV.mergeSources([a, b]);
+    if (out.length !== 1) return 'expected 1 merged market, got ' + out.length;
+    const m = out[0];
+    if (m.quotes.length !== 4) return 'expected 4 quotes, got ' + m.quotes.length;
+    if (m.outcomes[0] !== 'home') return 'base outcome order must survive';
+    const pinHome = m.quotes.find(x => x.venueId === 'pinnacle' && x.outcomeIx === 0);
+    if (!pinHome) return 'pinnacle home quote missing after remap';
+    /* Pinnacle listed away first at 2.55 and home second at 1.58, so the
+       home column must carry 1.58 -- not 2.55. */
+    return eq(pinHome.dGross, 1.58, 1e-12)
+      || 'reversed sides mapped to the wrong column: home got ' + pinHome.dGross;
+  });
+
+  t('A-merge refuses a different handicap and different kickoffs', () => {
+    const base = { kind:'spread', outcomes:['home','away'],
+                   quotes:[q('draftkings',0,1.91), q('draftkings',1,1.91)] };
+    const a = mkt(Object.assign({}, base, { id:'A', eventId:'EA', line:-3.5 }));
+    const b = mkt(Object.assign({}, base, { id:'B', eventId:'EB', line:-3,
+                                            srcId:'oddsapi' }));
+    if (LV.mergeSources([a, b]).length !== 2) return '-3.5 must never join -3.0';
+    const c = mkt({ id:'C', eventId:'EC', line:null, startMs: 1.7e12 });
+    const d = mkt({ id:'D', eventId:'ED', line:null, srcId:'oddsapi',
+                    startMs: 1.7e12 + 7 * 3600 * 1000 });    /* 7h apart */
+    return LV.mergeSources([c, d]).length === 2
+      || 'kickoffs 7h apart must not be treated as the same game';
+  });
+
+  t('A-merge keeps the fresher quote when one venue arrives from both feeds', () => {
+    const a = mkt({ id:'ESM1', eventId:'ES_1', srcId:'espn',
+      quotes:[q('draftkings',0,1.50,600), q('draftkings',1,2.60,600)] });
+    const b = mkt({ id:'L_1', eventId:'LE_1', srcId:'oddsapi',
+      quotes:[q('draftkings',0,1.53,5), q('draftkings',1,2.55,5)] });
+    const out = LV.mergeSources([a, b]);
+    if (out.length !== 1) return 'expected one market';
+    const dk = out[0].quotes.filter(x => x.venueId === 'draftkings' && x.outcomeIx === 0);
+    if (dk.length !== 1) return 'one venue must not vote twice on one outcome, got ' + dk.length;
+    return eq(dk[0].dGross, 1.53, 1e-12)
+      || 'the 5s-old quote must win over the 600s-old one, got ' + dk[0].dGross;
+  });
+
+  t('A-merge collapses a game to one event id, alternates included', () => {
+    const a = mkt({ id:'ESM7', eventId:'ES_7', srcId:'espn',
+      quotes:[q('draftkings',0,1.9), q('draftkings',1,1.9)] });
+    const b = mkt({ id:'L_7', eventId:'LE_7', srcId:'oddsapi',
+      quotes:[q('pinnacle',0,1.95), q('pinnacle',1,1.95)] });
+    /* An alternate spread line only one feed carries: it cannot join, but it
+       must not drag a second event id along and split the game in two. */
+    const alt = mkt({ id:'L_7s', eventId:'LE_7', srcId:'oddsapi', kind:'spread',
+      line:-2.5, quotes:[q('pinnacle',0,1.87), q('pinnacle',1,1.95)] });
+    const out = LV.mergeSources([a, b, alt]);
+    const ids = {};
+    for (const m of out) ids[m.eventId] = 1;
+    const n = Object.keys(ids).length;
+    return n === 1 || 'one game must be one event id, got ' + n + ': ' + Object.keys(ids).join(',');
+  });
+
+  t('A-merge never mutates the raw per-feed markets it was handed', () => {
+    const a = mkt({ id:'ESM3', eventId:'ES_3', srcId:'espn',
+      quotes:[q('draftkings',0,1.9), q('draftkings',1,1.9)] });
+    const b = mkt({ id:'L_3', eventId:'LE_3', srcId:'oddsapi',
+      quotes:[q('pinnacle',0,1.95), q('pinnacle',1,1.95)] });
+    const alt = mkt({ id:'L_3s', eventId:'LE_3', srcId:'oddsapi', kind:'total', line:44.5,
+      quotes:[q('pinnacle',0,1.9), q('pinnacle',1,1.9)] });
+    LV.mergeSources([a, b, alt]);
+    if (alt.eventId !== 'LE_3') return 'input market eventId was rewritten in place';
+    if (b.quotes.length !== 2) return 'input market quotes were mutated';
+    return a.quotes.length === 2 || 'base market quotes were mutated';
+  });
+
   function run() {
     const out = [];
     for (const x of T) {
@@ -314,6 +402,26 @@ VB.router = (function () {
         (staleL.length ? '. NOTE: ' + staleL.map(x => x.cat + ' is a cached pull from ' +
           Math.round(x.ageMs / 60000) + 'm ago — the live fetch failed'). join('; ') : '') +
         '. Prices are live; EV is modelled from them and is never a realised outcome.'));
+      /* A one-book board is the state that looks working and is not: real
+         prices, real games, and no fair price anywhere because a consensus
+         needs three independent book groups. Say so on the strip, with the
+         one action that fixes it, rather than letting every game read
+         "NO CALL" with no explanation. */
+      const multi = live.indexOf('oddsapi') >= 0;
+      if (!multi) {
+        const hasKey = !!(S.keys && S.keys.oddsapi);
+        const skipped = ol.filter(x => x.skipped)[0];
+        el.className = 'fetching';
+        el.appendChild(h('span', { class:'sep' }, [
+          h('b', {}, 'SINGLE BOOK — no fair price. '),
+          h('span', {}, !hasKey
+            ? 'No multi-book key is stored in this browser, so there is one book to read and ' +
+              'nothing to price it against. Settings → Live data adds a free one.'
+            : skipped ? 'The multi-book pull was skipped: ' + skipped.why +
+              ' Settings → Refresh odds overrides it.'
+            : 'The multi-book pull returned nothing. Settings → Refresh odds retries it.')
+        ]));
+      }
     } else if (au && au.done) {
       el.className = '';
       el.appendChild(h('span', {}, 'NO LIVE DATA'));
@@ -397,6 +505,8 @@ VB.router = (function () {
     const nRef = (M && M.refStats) ? M.refStats.matched : 0;
     badge.textContent = (au && au.running ? 'fetching' : 'live') + ' · ' +
       ((M && M.nEval) || 0).toLocaleString() + ' rows · ' + games + ' games' +
+      (M && M.merged && M.merged.joined
+        ? ' · ' + M.merged.joined + ' markets joined across feeds' : '') +
       (nRef ? ' · ' + nRef + ' vs exchange' : '') +
       ' · pipeline ' + ((M && M.timing.compute) || 0).toFixed(0) + 'ms' +
       ' · boot ' + badgeState.bootMs.toFixed(0) + 'ms' +

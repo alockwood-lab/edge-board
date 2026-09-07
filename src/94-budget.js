@@ -20,7 +20,16 @@ VB.budget = (function () {
   const KEY = 'vb.budget';
   const MONTHLY = 500;
   const RESERVE = 60;              /* never spend below this */
-  const VALUE_WINDOW_H = 14;       /* only pay for games inside this horizon */
+  /* The window was 14h, which was wrong -- not arithmetically, but about
+     people. It assumed odds are only worth paying for near kickoff. In
+     practice the app gets opened when the user thinks about a game, and NFL
+     is a weekly league: on a Monday the next game is ~57h out, so a 14h
+     window meant the board sat on a single free book all week and could not
+     build a fair price at all. A guard that makes the product useless six
+     days in seven is not thrift. 72h covers the whole NFL week and both CFB
+     Saturdays; the cooldown and the pace guard still cap total spend, and
+     they are the guards that actually control the burn. */
+  const VALUE_WINDOW_H = 72;       /* only pay for games inside this horizon */
   const MIN_GAP_MIN = 12;          /* never two paid pulls closer than this */
 
   const monthKey = (d) => {

@@ -311,8 +311,32 @@ VB.dom = (function () {
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
     window.addEventListener('scroll', hideTip, true);
   }
+  /* "home" and "away" are how the feed labels the sides. They are not how
+     anybody thinks about a game -- reading "home -164" forces the user to
+     look up which team is home before the number means anything. Every
+     surface that shows a side resolves it to the team name instead. */
+  function splitTeams(label) {
+    for (const sep of [' @ ', ' v ', ' vs ', ' VS ']) {
+      const i = String(label || '').indexOf(sep);
+      if (i > 0) return { away: label.slice(0, i), home: label.slice(i + sep.length), sep };
+    }
+    return { away: label || '', home: '', sep: null };
+  }
+  function sideLabel(market, side) {
+    const s = String(side);
+    if (s !== 'home' && s !== 'away') return s;      /* over/under, outrights */
+    const t = splitTeams(market && market.eventLabel);
+    const name = s === 'home' ? t.home : t.away;
+    return name ? name : s;
+  }
+  /* Possessive of a name already ending in s takes a bare apostrophe --
+     "DraftKings' line", not "DraftKings's line". */
+  const poss = (n) => String(n) + (/s$/i.test(String(n)) ? "'" : "'s");
+  const plural = (n, one, many) => n + ' ' + (n === 1 ? one : (many || one + 's'));
+
   return { h, t, clear, sgn, cls, money, ago, until, glyph,
            venueChip, sportIcon, registerSprite, SPRITE,
+           splitTeams, sideLabel, poss, plural,
            initTips, showTip, hideTip };
 })();
 

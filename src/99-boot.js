@@ -198,7 +198,7 @@ VB.views4 = (function () {
       'policy is an allocation, not a rate limit:'));
     const ul = h('div', { class:'small', style:'margin-top:6px;line-height:1.7' });
     [['Scout free first', 'ESPN and Polymarket cost nothing and refresh every 3 minutes. They answer whether games exist and when they start — the only thing that decides if a paid pull is worth it.'],
-     ['Spend inside the window', 'Paid pulls only fire when a game starts within ' + B.VALUE_WINDOW_H + 'h. A pull 30 hours out buys a line that will move before it matters.'],
+     ['Spend inside the window', 'Paid pulls only fire when a game starts within ' + B.VALUE_WINDOW_H + 'h — the whole NFL week plus both CFB Saturdays. Lines move inside that window, which is the point: an early number is what you compare the closing one against.'],
      ['Buy the reference, not retail', 'EU region for the sharp anchor; the bettable book comes free.'],
      ['Hold a reserve', B.RESERVE + ' credits are never auto-spent, so one busy Saturday cannot empty the month.'],
      ['Cooldown', 'No two paid pulls within ' + B.MIN_GAP_MIN + ' minutes.']

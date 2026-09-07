@@ -122,7 +122,13 @@ VB.live = (function () {
     for (const q of norm.quotes) {
       const v = resolveVenue(q.venueId, q.venueLabel, registry);
       if (!v.known) discovered.push({ key:q.venueId, label:q.venueLabel, id:v.id });
-      const lineKey = (q.line === null || q.line === undefined) ? 'null' : String(q.line);
+      /* Spreads group on the HOME handicap, never on "whichever point the
+         book listed first" -- see homeLine in the adapter. Totals are
+         orientation-free, so their own line is already canonical. */
+      const canon = q.marketKey === 'spreads'
+        ? (q.homeLine === null || q.homeLine === undefined ? q.line : q.homeLine)
+        : q.line;
+      const lineKey = (canon === null || canon === undefined) ? 'null' : String(canon);
       const key = q.nativeId + '|' + q.marketKey + '|' + lineKey;
       let g = groups[key];
       if (!g) {
@@ -130,7 +136,11 @@ VB.live = (function () {
            venue is mapped onto it by side name, so a venue that lists
            outcomes in a different order still lands in the right column. */
         g = groups[key] = {
-          id: 'L' + Object.keys(groups).length + '_' + q.marketKey,
+          /* Deterministic, not positional. The id used to embed the group's
+             insertion index, so a refresh that returned events in a
+             different order renumbered every market and broke any open
+             drill-down link. */
+          id: 'L_' + q.nativeId + '_' + q.marketKey + '_' + lineKey,
           eventId: 'LE_' + q.nativeId,
           cat: SPORT_CAT[q.sportKey] || 'OTHER',
           kind: q.marketKey === 'totals' ? 'total'
@@ -138,7 +148,8 @@ VB.live = (function () {
           eventLabel: q.eventLabel,
           marketLabel: MKT_LABEL[q.marketKey] || q.marketKey.toUpperCase(),
           outcomes: q.sides.slice(),
-          line: q.line === undefined ? null : q.line,
+          line: canon === undefined ? null : canon,
+          startMs: q.commenceTime ? Date.parse(q.commenceTime) : NaN,
           startSec: q.commenceTime ? Math.max(0, (Date.parse(q.commenceTime) - nowMs) / 1000) : NaN,
           isLive: false, pairConfidence: 1, srcId: 'oddsapi', quotes: []
         };
@@ -217,6 +228,7 @@ VB.live = (function () {
       const startSec = q.commenceTime
         ? Math.max(0, (Date.parse(q.commenceTime) - nowMs) / 1000) : NaN;
       const base = { eventId:'ES_' + q.nativeId, cat:q.cat, eventLabel:q.eventLabel,
+                     startMs: q.commenceTime ? Date.parse(q.commenceTime) : NaN,
                      startSec, isLive: q.statusState === 'in',
                      pairConfidence:1, srcId:'espn' };
       if (q.moneyline) {
@@ -247,6 +259,124 @@ VB.live = (function () {
     return out;
   }
 
-  return { KEYMAP, resolveVenue, marketsFromOddsApi, marketsFromPolymarket, marketsFromEspn,
+  /* ------------------------------------------------- CROSS-SOURCE MERGE
+     Each feed built its own market objects, so the same NFL game existed
+     twice: an ESPN copy carrying DraftKings alone, and an Odds API copy
+     carrying the EU books. Nothing joined them. Two consequences, both
+     fatal to the point of the app:
+
+       1. Every game was listed twice, so the board's game count was double
+          the real slate.
+       2. The book you can actually bet at sat in a different market object
+          from the consensus that would judge it. DraftKings came from ESPN;
+          the sharp anchors came from `regions=eu`. So the one comparison
+          this product exists to make -- is DraftKings' price beatable --
+          was never computed. Clicking a game landed on whichever copy the
+          layout picked, and the ESPN copy has one book, which cannot clear
+          a 3-cluster gate. Hence "NO CALL" on a market that 21 books quote.
+
+     The join is strict on purpose. Key is league + normalized matchup +
+     market kind + handicap, and the two candidates must start within six
+     hours of each other. No fuzzy team matching and no numeric tolerance on
+     the line: a -3.5 never merges with a -3.0, and a mispaired market would
+     print an edge that does not exist, which is worse than showing none. */
+  function mergeKeyOf(m) {
+    const label = String(m.eventLabel || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/[^a-z0-9@]+/g, ' ').trim();
+    if (!label || !m.kind) return null;
+    const lineKey = (m.line === null || m.line === undefined) ? 'null' : String(m.line);
+    return String(m.cat) + '|' + label + '|' + String(m.kind) + '|' + lineKey;
+  }
+
+  function mergeSources(markets) {
+    const out = [], groups = {}, order = [], eventAlias = {};
+    for (const m of (markets || [])) {
+      const k = mergeKeyOf(m);
+      if (!k) { out.push(m); continue; }
+      if (!groups[k]) { groups[k] = []; order.push(k); }
+      groups[k].push(m);
+    }
+    const SIX_H = 6 * 3600 * 1000;
+    for (const k of order) {
+      const set = groups[k];
+      if (set.length === 1) { out.push(set[0]); continue; }
+      /* Same key, but verify the kickoffs agree before joining. */
+      const anchor = set.find(m => isFinite(m.startMs)) || set[0];
+      const join = [], reject = [];
+      for (const m of set) {
+        const ok = !isFinite(m.startMs) || !isFinite(anchor.startMs)
+          || Math.abs(m.startMs - anchor.startMs) <= SIX_H;
+        (ok ? join : reject).push(m);
+      }
+      for (const m of reject) out.push(m);
+      if (join.length === 1) { out.push(join[0]); continue; }
+      /* Outcome order is fixed by the first member; later members map onto
+         it by side NAME, so a feed that lists the sides the other way round
+         still lands in the right column. A member whose sides cannot be
+         mapped is kept separate rather than silently bent to fit. */
+      const baseIx = join.findIndex(m => m.srcId === 'espn');
+      const base = join[baseIx >= 0 ? baseIx : 0];
+      const outcomes = base.outcomes.slice();
+      const merged = Object.assign({}, base, {
+        outcomes, quotes: [], srcIds: [], ids: [],
+        srcId: 'merged', pairConfidence: 1
+      });
+      const seen = {};                 /* venueId|ix -> the quote we kept */
+      let dropped = 0;
+      for (const m of join) {
+        const map = m.outcomes.map(o => outcomes.indexOf(o));
+        if (map.some(x => x < 0)) { out.push(m); continue; }
+        merged.ids.push(m.id);
+        if (m.eventId !== base.eventId) eventAlias[m.eventId] = base.eventId;
+        if (merged.srcIds.indexOf(m.srcId) < 0) merged.srcIds.push(m.srcId);
+        if (isFinite(m.pairConfidence)) {
+          merged.pairConfidence = Math.min(merged.pairConfidence, m.pairConfidence);
+        }
+        merged.isLive = merged.isLive || m.isLive;
+        for (const q of m.quotes) {
+          const ix = map[q.outcomeIx];
+          if (ix === undefined || ix < 0) { dropped++; continue; }
+          const kk = q.venueId + '|' + ix;
+          const prev = seen[kk];
+          /* One venue reached by two feeds: keep the fresher quote. Age is
+             the tiebreak because a stale duplicate would otherwise decide
+             the price purely by feed ordering. */
+          if (prev && !(isFinite(q.ageSec) && isFinite(prev.ageSec) && q.ageSec < prev.ageSec)) {
+            dropped++; continue;
+          }
+          const copy = Object.assign({}, q, { outcomeIx: ix });
+          if (prev) {
+            merged.quotes[merged.quotes.indexOf(prev)] = copy;
+          } else merged.quotes.push(copy);
+          seen[kk] = copy;
+        }
+      }
+      if (!merged.ids.length) continue;
+      if (merged.ids.length === 1) { out.push(join.find(m => m.id === merged.ids[0])); continue; }
+      merged.id = merged.ids[0];
+      merged.mergedFrom = merged.ids.slice();
+      merged.mergedDropped = dropped;
+      out.push(merged);
+    }
+    /* Joining the main markets is not enough to make a game ONE game. A
+       book quoting -3.0 when the rest are on -3.5 produces a spread market
+       with no counterpart in the other feed, so it stays unjoined and drags
+       its own feed's event id along with it -- and the games layout, which
+       groups by event id, shows the matchup twice: once with the joined
+       markets, once with the leftover alternate lines. So every event id
+       that took part in a join is rewritten to the surviving one, which
+       collapses the alternates into the same band. Rewriting is done on
+       copies: M.slate.markets is the raw per-feed store that refresh keys
+       off, and mutating it here would corrupt the next refresh. */
+    if (!Object.keys(eventAlias).length) return out;
+    return out.map((m) => {
+      const to = eventAlias[m.eventId];
+      return to ? Object.assign({}, m, { eventId: to, eventIdWas: m.eventId }) : m;
+    });
+  }
+
+  return { KEYMAP, resolveVenue, mergeSources, mergeKeyOf,
+           marketsFromOddsApi, marketsFromPolymarket, marketsFromEspn,
            SPORT_CAT, MKT_LABEL, catForQuestion };
 })();
