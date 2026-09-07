@@ -394,6 +394,37 @@ VB.views4 = (function () {
     box.appendChild(oa);
     box.appendChild(status);
 
+    /* Share link. Solves the real problem -- handing this to someone who
+       will not paste a key -- without publishing the key in a public repo. */
+    const key0 = (S.keys && S.keys.oddsapi) || '';
+    if (key0) {
+      const base = 'https://alockwood-lab.github.io/edge-board/';
+      const link = base + '#/board/all?k=' + encodeURIComponent(key0);
+      const shareBox = h('div', { style:'margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)' });
+      shareBox.appendChild(h('div', { style:'font-weight:700;margin-bottom:4px' }, 'Share this with someone'));
+      shareBox.appendChild(h('div', { class:'small muted', style:'margin-bottom:6px' },
+        'This link carries your API key. Whoever opens it is configured instantly — no ' +
+        'pasting, no signup. The key is captured into their browser and removed from the ' +
+        'address bar on load. Anyone with the link spends YOUR credits, so treat it like ' +
+        'a password: send it to a person, not a public place. Rotate at ' +
+        'the-odds-api.com/account/ to invalidate every link at once.'));
+      const inp = h('input', { type:'text', value:link, readonly:'readonly',
+        style:'width:100%;font-family:var(--mono);font-size:11px' });
+      shareBox.appendChild(inp);
+      shareBox.appendChild(h('div', { class:'row', style:'margin-top:6px' }, [
+        h('button', { class:'pri', onclick:() => {
+          inp.select();
+          try { navigator.clipboard.writeText(link); setStatus('share link copied', 'pos'); }
+          catch (e) { setStatus('press Cmd+C to copy the selected link'); }
+        } }, 'Copy share link'),
+        h('button', { onclick:() => {
+          S.keys.oddsapi = ''; VB.store.save(); VB.router.render();
+          setStatus('key cleared from this browser', 'warn');
+        } }, 'Clear key here')
+      ]));
+      box.appendChild(shareBox);
+    }
+
     /* Paste path: identical code, different transport. */
     const ta = h('textarea', { rows:3, placeholder:'…or paste a JSON response here',
       style:'width:100%;font-family:var(--mono);font-size:10.5px;border:1px solid var(--border-strong);background:transparent;color:inherit;padding:5px' });

@@ -404,9 +404,41 @@ VB.router = (function () {
       ' · ' + window.__vbErrs.length + ' errors';
   }
 
+  /* KEY-IN-LINK.
+     A shareable link carries the API key as a `k` parameter; boot captures it
+     into localStorage, strips it from the address bar, and from then on the
+     visitor is configured. One click, no setup, nothing for a non-technical
+     user to paste.
+     Why this instead of committing the key: the repo is public, so a
+     committed key is PUBLISHED -- crawlable within minutes and subject to
+     secret scanning. A key in a link is shared only with whoever receives
+     the link, which is what "let my friend use it" actually means. */
+  function captureKeyFromUrl() {
+    const raw = location.hash || '';
+    const qi = raw.indexOf('?');
+    if (qi < 0) return false;
+    const p = new URLSearchParams(raw.slice(qi + 1));
+    const k = (p.get('k') || '').trim();
+    if (!/^[a-zA-Z0-9]{16,64}$/.test(k)) return false;
+    const S = VB.store.get();
+    S.keys = S.keys || {};
+    S.keys.oddsapi = k;
+    VB.store.save();
+    /* Strip it from the URL so it does not sit in the address bar, get
+       screenshotted, or end up in a browser-history sync. */
+    p.delete('k');
+    const rest = p.toString();
+    const path = raw.slice(0, qi);
+    history.replaceState(null, '', location.pathname + location.search +
+      path + (rest ? '?' + rest : ''));
+    return true;
+  }
+
   function boot() {
     const t0 = performance.now();
     VB.store.load();
+    const gotKey = captureKeyFromUrl();
+    if (gotKey) VB.store.load.viaLink = true;
     const S = VB.store.get();
     if (S.settings.noColour) document.documentElement.dataset.nocolour = '1';
     strip();
