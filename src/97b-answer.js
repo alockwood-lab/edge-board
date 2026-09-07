@@ -164,12 +164,24 @@ VB.answer = (function () {
     } else if (s.bookFair) {
       const S2 = VB.store.get();
       const hasKey = !!(S2.keys && S2.keys.oddsapi);
+      /* "One book" has three different causes and they need three different
+         sentences. Saying "add a key" to someone who has one, or "refresh"
+         to someone looking at a league the key was never spent on, reads as
+         the app being broken when it is doing exactly what it was told. */
+      const covered = (VB.model.ODDS_DEFAULT || []);
+      const inCovered = covered.indexOf(market.cat) >= 0;
       sentence = 'A fair price needs at least 3 independent book groups; this market has ' +
         s.nVenues + '. The Fair column is ' + poss(s.bookFair.venueName) + ' own line with its ' +
         (s.bookFair.hold * 100).toFixed(2) + '% margin removed — it is what that book thinks, ' +
         'not whether the price is good, so no edge is shown. ' +
-        (hasKey ? 'Use Refresh odds in Settings to pull the other books now.'
-                : 'Add a free multi-book key in Settings to price this against 20+ books.');
+        (!hasKey
+          ? 'Add a free multi-book key in Settings to price this against 20+ books.'
+          : !inCovered
+          ? 'Multi-book pricing is bought one league at a time to stay inside the free ' +
+            'plan\'s 500 credits a month, and it currently covers ' + covered.join(' and ') +
+            '. ' + market.cat + ' shows the free feed only, which is one book. Add ' +
+            market.cat + ' in Settings → Live data if you want to spend credits on it.'
+          : 'Use Refresh odds in Settings to pull the other books now.');
     } else {
       sentence = 'Not enough independent books quote this market to build a fair price, so ' +
         'no edge can be measured. Every price below is real; none of them can be judged.';

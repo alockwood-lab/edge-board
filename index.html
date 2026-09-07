@@ -3696,12 +3696,22 @@ VB.store = (function () {
        credential. Do not share or screen-share this file. Rotate at
        the-odds-api.com/account/ if it is ever exposed; clearing the field in
        Settings removes it from storage but NOT from this file. */
-    /* Deliberately EMPTY in source. The key is a live credential and this
-       repo is public-capable, so it is never committed. Paste it once in
-       Settings -> Live data; it persists in this browser's localStorage
-       under vb.keys and survives reloads. Rotate at
-       the-odds-api.com/account/ if it is ever exposed. */
-    keys: {},
+    /* SHIPPED KEY, AT THE OWNER'S EXPLICIT INSTRUCTION.
+       A free Odds API key on a 500-credit/month plan. The owner asked three
+       times for the app to work with no setup step for a non-technical
+       visitor, so it ships in the file rather than being pasted in.
+
+       Stated plainly rather than buried: this repo is public, so this key is
+       public. Bots scrape public GitHub continuously and a scraped key gets
+       its month drained -- at which point the board falls back to one free
+       book for everyone. GitHub secret scanning may also flag it.
+       What limits the damage: auto-load pulls ONE league (3 credits a visit,
+       not 6), 60 credits are held in reserve and never auto-spent, and no
+       two paid pulls fire within 12 minutes.
+       Rotate at the-odds-api.com/account/. Rotating invalidates this build,
+       so update this line and rebuild, or paste the new one in Settings.
+       A visitor's own key, entered in Settings, always overrides this. */
+    keys: { oddsapi: '4ebd93b9d314a5885238462e072b58ab' },
     runtime: { storage:{local:false}, bootErrors:[], tests:null }
   };
 
@@ -5850,12 +5860,24 @@ VB.answer = (function () {
     } else if (s.bookFair) {
       const S2 = VB.store.get();
       const hasKey = !!(S2.keys && S2.keys.oddsapi);
+      /* "One book" has three different causes and they need three different
+         sentences. Saying "add a key" to someone who has one, or "refresh"
+         to someone looking at a league the key was never spent on, reads as
+         the app being broken when it is doing exactly what it was told. */
+      const covered = (VB.model.ODDS_DEFAULT || []);
+      const inCovered = covered.indexOf(market.cat) >= 0;
       sentence = 'A fair price needs at least 3 independent book groups; this market has ' +
         s.nVenues + '. The Fair column is ' + poss(s.bookFair.venueName) + ' own line with its ' +
         (s.bookFair.hold * 100).toFixed(2) + '% margin removed — it is what that book thinks, ' +
         'not whether the price is good, so no edge is shown. ' +
-        (hasKey ? 'Use Refresh odds in Settings to pull the other books now.'
-                : 'Add a free multi-book key in Settings to price this against 20+ books.');
+        (!hasKey
+          ? 'Add a free multi-book key in Settings to price this against 20+ books.'
+          : !inCovered
+          ? 'Multi-book pricing is bought one league at a time to stay inside the free ' +
+            'plan\'s 500 credits a month, and it currently covers ' + covered.join(' and ') +
+            '. ' + market.cat + ' shows the free feed only, which is one book. Add ' +
+            market.cat + ' in Settings → Live data if you want to spend credits on it.'
+          : 'Use Refresh odds in Settings to pull the other books now.');
     } else {
       sentence = 'Not enough independent books quote this market to build a fair price, so ' +
         'no edge can be measured. Every price below is real; none of them can be judged.';

@@ -41,12 +41,22 @@ VB.store = (function () {
        credential. Do not share or screen-share this file. Rotate at
        the-odds-api.com/account/ if it is ever exposed; clearing the field in
        Settings removes it from storage but NOT from this file. */
-    /* Deliberately EMPTY in source. The key is a live credential and this
-       repo is public-capable, so it is never committed. Paste it once in
-       Settings -> Live data; it persists in this browser's localStorage
-       under vb.keys and survives reloads. Rotate at
-       the-odds-api.com/account/ if it is ever exposed. */
-    keys: {},
+    /* SHIPPED KEY, AT THE OWNER'S EXPLICIT INSTRUCTION.
+       A free Odds API key on a 500-credit/month plan. The owner asked three
+       times for the app to work with no setup step for a non-technical
+       visitor, so it ships in the file rather than being pasted in.
+
+       Stated plainly rather than buried: this repo is public, so this key is
+       public. Bots scrape public GitHub continuously and a scraped key gets
+       its month drained -- at which point the board falls back to one free
+       book for everyone. GitHub secret scanning may also flag it.
+       What limits the damage: auto-load pulls ONE league (3 credits a visit,
+       not 6), 60 credits are held in reserve and never auto-spent, and no
+       two paid pulls fire within 12 minutes.
+       Rotate at the-odds-api.com/account/. Rotating invalidates this build,
+       so update this line and rebuild, or paste the new one in Settings.
+       A visitor's own key, entered in Settings, always overrides this. */
+    keys: { oddsapi: '4ebd93b9d314a5885238462e072b58ab' },
     runtime: { storage:{local:false}, bootErrors:[], tests:null }
   };
 
