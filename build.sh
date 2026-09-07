@@ -17,4 +17,5 @@ echo '/*==VB-CORE-END==*/' >> $OUT
 for f in $APP; do echo "" >> $OUT; cat "src/$f.js" >> $OUT; done
 echo '</script>' >> $OUT
 echo '</body></html>' >> $OUT
-echo "built $OUT: $(wc -c < $OUT) bytes"
+cp "$OUT" index.html          # GitHub Pages entry point, same bytes
+echo "built $OUT (+ index.html): $(wc -c < $OUT) bytes"
